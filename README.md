@@ -64,6 +64,25 @@ uv tool upgrade mirea-connect   # обновить
 
 Локальный режим работает во всех клиентах из таблицы и в любом другом, который умеет запускать stdio MCP-серверы. Команду для ручной настройки покажет `mirea-connect install`, если не найдёт ни одного клиента. Для веб-версии claude.ai и телефона нужен удалённый сервер, см. [«Свой сервер»](#свой-сервер).
 
+## Как CLI
+
+Коннектор — это ещё и обычная утилита терминала (один `mirea-connect login` включает и CLI, и MCP):
+
+```bash
+mirea-connect login                         # вход в МИРЭА (пароль + код из почты)
+mirea-connect schedule -d 3                 # своё расписание
+mirea-connect grades                        # баллы БРС
+mirea-connect attendance "Физика"           # посещаемость по дисциплине
+mirea-connect acs                           # турникеты за сегодня
+mirea-connect sdo                           # СДО: курсы, дедлайны, оценки
+mirea-connect search teacher Осипов         # поиск (group | teacher | classroom)
+mirea-connect timetable group ЭФБО-01-24    # публичное расписание (вход не нужен)
+mirea-connect free-rooms 10:40 12:10 --campus В-78     # свободные аудитории
+mirea-connect free-rooms 10:40 12:10 А-9 ИВЦ-124       # свободны ли эти
+```
+
+У каждой команды есть `--json`.
+
 ## Инструменты
 
 | Инструмент | Нужен вход | Что делает |

@@ -9,6 +9,7 @@ import os
 import sys
 
 from . import __version__
+from . import services as S
 
 
 def _store():
@@ -65,7 +66,23 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int)
     s.add_argument("--public-url")
 
+    from .commands import DATA_COMMANDS, add_subparsers
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="вывести результат в JSON")
+    add_subparsers(sub, common)
+
     args = p.parse_args(argv)
+    if args.cmd in DATA_COMMANDS:
+        from .commands import run as run_data
+
+        try:
+            return asyncio.run(run_data(args, _store()))
+        except S.ServiceError as e:
+            print(f"Ошибка: {e}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            return 130
     try:
         if args.cmd == "install":
             from .installer import install

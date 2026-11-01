@@ -219,3 +219,43 @@ def test_install_prompt_choice_and_no_clients(tmp_path, monkeypatch, capsys):
 
     installer.install(True, mode="prompt")
     assert "Вставьте этот промпт" in capsys.readouterr().out
+
+
+def test_cli_data_commands(monkeypatch, capsys, tmp_path):
+    """CLI-команды рендерят данные от services без сети."""
+    import json as _json
+
+    from mirea_connect import services
+    from mirea_connect.cli import main
+
+    monkeypatch.setenv("PYMIREA_HOME", str(tmp_path / "home"))
+
+    async def fake_timetable(kind, query, days, date_from):
+        return {
+            "kind": kind,
+            "name": query,
+            "events": [{"start": "2030-01-10T09:00+03:00", "end": "2030-01-10T10:30+03:00", "summary": "Физика", "location": "А-9"}],
+        }
+
+    async def fake_free(rooms, date, start, end, campus=None):
+        if rooms:
+            return {"rooms": [{"room": r, "free": r == "А-9"} for r in rooms]}
+        return {"campus": campus, "total_free": 1, "free_rooms": [{"room": "А-9", "campus": "В-78"}]}
+
+    monkeypatch.setattr(services, "timetable", fake_timetable)
+    monkeypatch.setattr(services, "free_rooms", fake_free)
+
+    assert main(["timetable", "group", "ЭФБО-01-24", "--json"]) == 0
+    assert _json.loads(capsys.readouterr().out)["events"][0]["summary"] == "Физика"
+
+    assert main(["timetable", "group", "ЭФБО-01-24"]) == 0
+    out = capsys.readouterr().out
+    assert "Физика" in out and "09:00-10:30" in out
+
+    assert main(["free-rooms", "10:40", "12:10", "А-9", "Б-1"]) == 0
+    out = capsys.readouterr().out
+    assert "свободна" in out and "занята" in out
+
+    # личная команда без входа → понятная ошибка, не трейс
+    assert main(["grades"]) == 1
+    assert "login" in capsys.readouterr().err
