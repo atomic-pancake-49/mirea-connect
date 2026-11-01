@@ -90,6 +90,9 @@ def test_installer_writes_configs(tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "claude_desktop_config", lambda: desktop)
     monkeypatch.setattr(installer, "cursor_config", lambda: cursor)
     monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "no-codex"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "no-hermes"))
+    monkeypatch.setenv("OPENCLAW_HOME", str(tmp_path / "no-openclaw"))
 
     assert installer.install(True) == 0
     d = json.loads(desktop.read_text())
@@ -100,3 +103,81 @@ def test_installer_writes_configs(tmp_path, monkeypatch):
     installer.install(False)
     assert "mirea" not in json.loads(desktop.read_text())["mcpServers"]
     assert "other" in json.loads(desktop.read_text())["mcpServers"]
+
+
+def test_codex_toml_roundtrip():
+    import tomllib
+
+    src = 'model = "o4"\n\n[mcp_servers.other]\ncommand = "x"\n\n[mcp_servers.mirea]\ncommand = "old"\n\n[mcp_servers.mirea.env]\nA = "1"\n\n[profiles.p]\nmodel = "y"\n'
+    out, changed = installer.edit_codex_toml(src, True)
+    data = tomllib.loads(out)
+    assert changed
+    assert data["model"] == "o4" and data["profiles"]["p"]["model"] == "y"
+    assert data["mcp_servers"]["other"]["command"] == "x"
+    assert data["mcp_servers"]["mirea"]["args"][-2:] == ["mirea_connect", "local"]
+    assert "env" not in data["mcp_servers"]["mirea"]
+    out2, _ = installer.edit_codex_toml(out, True)
+    assert out2.count("[mcp_servers.mirea]") == 1
+    removed, changed = installer.edit_codex_toml(out2, False)
+    assert changed and "mirea" not in tomllib.loads(removed)["mcp_servers"]
+    assert installer.edit_codex_toml("", True)[0].startswith("[mcp_servers.mirea]")
+
+
+def test_hermes_yaml_roundtrip():
+    yaml = pytest.importorskip("yaml")
+    src = (
+        "model: hermes-4\n"
+        "mcp_servers:\n"
+        "    # comment\n"
+        "    filesystem:\n"
+        "        command: npx\n"
+        "        args: [\"-y\", \"x\"]\n"
+        "    mirea:\n"
+        "        command: old\n"
+        "        args: []\n"
+        "toolsets:\n"
+        "  - web\n"
+    )
+    out, changed = installer.edit_hermes_yaml(src, True)
+    data = yaml.safe_load(out)
+    assert changed and data["model"] == "hermes-4" and data["toolsets"] == ["web"]
+    assert data["mcp_servers"]["filesystem"]["command"] == "npx"
+    assert data["mcp_servers"]["mirea"]["args"][-2:] == ["mirea_connect", "local"]
+    assert "# comment" in out
+    out2, _ = installer.edit_hermes_yaml(out, True)
+    assert out2.count("mirea:") == 1
+    removed, changed = installer.edit_hermes_yaml(out2, False)
+    assert changed and "mirea" not in yaml.safe_load(removed)["mcp_servers"]
+
+    fresh, _ = installer.edit_hermes_yaml("model: x\n", True)
+    assert yaml.safe_load(fresh)["mcp_servers"]["mirea"]["command"]
+    empty, _ = installer.edit_hermes_yaml("mcp_servers: {}\n", True)
+    assert "mirea" in yaml.safe_load(empty)["mcp_servers"]
+
+
+def test_installer_codex_hermes_openclaw(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(installer, "claude_desktop_config", lambda: tmp_path / "nope" / "c.json")
+    monkeypatch.setattr(installer, "cursor_config", lambda: tmp_path / "nope2" / "mcp.json")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".hermes").mkdir()
+    (tmp_path / ".hermes" / "config.yaml").write_text("model: x\n")
+    monkeypatch.setattr(installer.shutil, "which", lambda n: "/bin/openclaw" if n == "openclaw" else None)
+
+    class R:
+        returncode = 0
+        stdout = stderr = ""
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return R()
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+    installer.install(True)
+    assert "[mcp_servers.mirea]" in (tmp_path / ".codex" / "config.toml").read_text()
+    assert "mirea:" in (tmp_path / ".hermes" / "config.yaml").read_text()
+    oc = [c for c in calls if c[0] == "/bin/openclaw"]
+    assert oc and oc[0][1:4] == ["mcp", "set", "mirea"]
+    assert json.loads(oc[0][4])["args"][-1] == "local"
