@@ -13,7 +13,6 @@ Write-Host "-> Ставлю mirea-connect..."
 uv tool install --force --python 3.12 $Src
 
 $Bin = Join-Path (uv tool dir --bin) "mirea-connect.exe"
-Write-Host "-> Подключаю к клиентам..."
 & $Bin install
 
 Write-Host ""

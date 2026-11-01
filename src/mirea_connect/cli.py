@@ -48,7 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", action="version", version=f"mirea-connect {__version__}")
     sub = p.add_subparsers(dest="cmd", metavar="КОМАНДА")
 
-    sub.add_parser("install", help="подключить коннектор ко всем найденным клиентам")
+    s = sub.add_parser("install", help="подключить коннектор к клиентам (меню выбора)")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--all", action="store_true", help="без вопросов, ко всем найденным клиентам")
+    g.add_argument("--prompt", action="store_true", help="только показать промпт для другого агента")
     sub.add_parser("uninstall", help="отключить коннектор от клиентов")
     s = sub.add_parser("prompt", help="промпт для любого другого агента, чтобы он подключил коннектор сам")
     s.add_argument("--json", action="store_true", help="только параметры сервера в JSON")
@@ -67,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "install":
             from .installer import install
 
-            return install(True)
+            return install(True, mode="all" if args.all else "prompt" if args.prompt else "auto")
         if args.cmd == "prompt":
             import json
 

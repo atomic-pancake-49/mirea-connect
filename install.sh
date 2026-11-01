@@ -16,8 +16,12 @@ echo "→ Ставлю mirea-connect…"
 uv tool install --force --python 3.12 "$SRC"
 
 BIN="$(uv tool dir --bin)/mirea-connect"
-echo "→ Подключаю к клиентам…"
-"$BIN" install
+# При `curl … | sh` stdin занят скриптом — меню читает ответы с терминала.
+if ( : < /dev/tty ) 2>/dev/null; then
+    "$BIN" install < /dev/tty
+else
+    "$BIN" install --all
+fi
 
 echo
 echo "Готово. Команда: $BIN"

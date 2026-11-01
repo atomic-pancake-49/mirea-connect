@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 NAME = "mirea"
 
@@ -279,40 +280,133 @@ def _claude_code(add: bool) -> bool:
     return True
 
 
-def install(add: bool = True) -> int:
-    verb = "Подключено" if add else "Удалено"
-    done: list[str] = []
+PROMPT_CHOICE = "prompt"
 
+
+def _clients() -> list[tuple[str, Callable[[], bool], Callable[[bool], bool]]]:
+    """(название, найден ли клиент, применить add/remove)."""
     desktop = claude_desktop_config()
-    if desktop.parent.exists() or desktop.exists():
-        if _merge_json(desktop, add):
-            done.append(f"Claude Desktop ({desktop})")
-
-    if _claude_code(add):
-        done.append("Claude Code")
-
     cursor = cursor_config()
-    if cursor.parent.exists():
-        if _merge_json(cursor, add):
-            done.append(f"Cursor ({cursor})")
+    return [
+        ("Claude Desktop", lambda: desktop.parent.exists() or desktop.exists(), lambda add: _merge_json(desktop, add)),
+        ("Claude Code", lambda: bool(shutil.which("claude")), _claude_code),
+        ("Cursor", lambda: cursor.parent.exists(), lambda add: _merge_json(cursor, add)),
+        ("Codex", lambda: bool(shutil.which("codex")) or codex_config().parent.exists(), _codex),
+        ("Hermes Agent", lambda: hermes_config().parent.exists(), _hermes),
+        ("OpenClaw", lambda: bool(shutil.which("openclaw")) or openclaw_config().exists(), _openclaw),
+    ]
 
-    for name, fn in (("Codex", _codex), ("Hermes Agent", _hermes), ("OpenClaw", _openclaw)):
+
+def _ask(question: str) -> str:
+    try:
+        return input(question)
+    except EOFError:
+        return ""
+
+
+def choose(found: list[str], ask: Callable[[str], str] = _ask) -> list[str]:
+    """Интерактивное меню. Возвращает выбранные названия клиентов и/или PROMPT_CHOICE."""
+    options = [*found, PROMPT_CHOICE]
+    print("\nКуда подключить MIREA Connect?\n")
+    for n, name in enumerate(options, 1):
+        label = "Другой агент или харнесс — показать промпт, он подключит коннектор сам" if name == PROMPT_CHOICE else name
+        print(f"  {n}) {label}")
+    default = "все найденные" if found else str(len(options))
+    while True:
+        raw = ask(f"\nНомера через пробел (Enter — {default}): ").replace(",", " ").split()
+        if not raw:
+            return found or [PROMPT_CHOICE]
         try:
-            if fn(add):
+            picked = [options[int(x) - 1] for x in raw if 1 <= int(x) <= len(options)]
+        except ValueError:
+            picked = []
+        if picked and len(picked) == len(raw):
+            return list(dict.fromkeys(picked))
+        print(f"  Введите номера от 1 до {len(options)}.")
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    candidates = [["pbcopy"], ["clip"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]
+    for cmd in candidates:
+        exe = shutil.which(cmd[0])
+        if not exe:
+            continue
+        try:
+            r = subprocess.run([exe, *cmd[1:]], input=text.encode("utf-16le" if cmd[0] == "clip" else "utf-8"), capture_output=True, timeout=5)
+            if r.returncode == 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def show_prompt() -> None:
+    from pymirea.store import default_home
+
+    text = agent_prompt()
+    bar = "─" * 60
+    print(f"\nВставьте этот промпт своему агенту:\n{bar}\n{text}\n{bar}")
+    path = default_home() / "agent-prompt.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
+        print(f"Сохранён в {path}")
+    except OSError:
+        pass
+    if _copy_to_clipboard(text):
+        print("И скопирован в буфер обмена.")
+    print("Показать снова: mirea-connect prompt")
+
+
+def install(add: bool = True, mode: str = "auto") -> int:
+    """mode: auto — меню, если есть терминал, иначе все найденные; all — все найденные; prompt — только промпт."""
+    clients = _clients()
+    found = [name for name, detect, _ in clients if _safe(detect)]
+
+    if not add:
+        selected = [name for name, _, _ in clients]
+    elif mode == "prompt":
+        selected = [PROMPT_CHOICE]
+    elif mode == "auto" and sys.stdin.isatty():
+        selected = choose(found)
+    else:
+        selected = found or [PROMPT_CHOICE]
+
+    done: list[str] = []
+    for name, _, apply in clients:
+        if name not in selected:
+            continue
+        try:
+            if apply(add):
                 done.append(name)
-        except Exception as e:  # один сломанный клиент не должен ронять установку остальных
+        except Exception as e:  # один сломанный клиент не должен ронять остальные
             print(f"  ! {name}: {e}")
 
     if done:
-        print(f"{verb}:")
+        print(("\nПодключено:" if add else "Отключено:"))
         for d in done:
             print(f"  ✓ {d}")
-    else:
-        print("Не нашёл ни одного поддерживаемого клиента (Claude Desktop, Claude Code, Cursor, Codex, Hermes, OpenClaw).")
-        if add:
-            print("\nЕсли у вас другой агент — вставьте ему этот промпт, он подключит коннектор сам:\n")
-            print(agent_prompt())
+    elif add and PROMPT_CHOICE not in selected:
+        print("\nНи к одному клиенту подключить не получилось.")
+        selected.append(PROMPT_CHOICE)
+    elif not add:
+        print("Коннектор не был подключён ни к одному клиенту.")
+
+    if add and PROMPT_CHOICE in selected:
+        if not found:
+            print("\nНе нашёл ни одного известного клиента (Claude Desktop, Claude Code, Cursor, Codex, Hermes, OpenClaw).")
+        show_prompt()
     if add:
-        print("\nПерезапустите открытые клиенты (Claude Desktop, Cursor, Codex и т.д.), чтобы они подхватили коннектор.")
+        if done:
+            print("\nПерезапустите открытые клиенты, чтобы они подхватили коннектор.")
         print("Войти в МИРЭА: попросите ассистента «войди в МИРЭА» или выполните `mirea-connect login`.")
+        if PROMPT_CHOICE not in selected:
+            print("Другой агент или харнесс? `mirea-connect prompt` — промпт, чтобы он подключил коннектор сам.")
     return 0
+
+
+def _safe(fn: Callable[[], bool]) -> bool:
+    try:
+        return bool(fn())
+    except Exception:
+        return False

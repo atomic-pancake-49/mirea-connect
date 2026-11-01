@@ -192,3 +192,30 @@ def test_prompt_command(capsys):
     assert main(["prompt"]) == 0
     text = capsys.readouterr().out
     assert spec["command"] in text and "llms-install.md" in text and "пароль" in text
+
+
+def test_menu_choose():
+    answers = iter(["", "9", "abc", "2 3", "3"])
+    ask = lambda q: next(answers)  # noqa: E731
+    found = ["Claude Desktop", "Codex"]
+    assert installer.choose(found, ask) == found  # Enter — все найденные
+    assert installer.choose(found, ask) == ["Codex", installer.PROMPT_CHOICE]  # 9 и abc отклонены, потом «2 3»
+    assert installer.choose(found, ask) == [installer.PROMPT_CHOICE]
+    assert installer.choose([], lambda q: "") == [installer.PROMPT_CHOICE]
+
+
+def test_install_prompt_choice_and_no_clients(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PYMIREA_HOME", str(tmp_path / "pm"))
+    for var in ("CODEX_HOME", "HERMES_HOME", "OPENCLAW_HOME"):
+        monkeypatch.setenv(var, str(tmp_path / var))
+    monkeypatch.setattr(installer, "claude_desktop_config", lambda: tmp_path / "x" / "c.json")
+    monkeypatch.setattr(installer, "cursor_config", lambda: tmp_path / "y" / "mcp.json")
+    monkeypatch.setattr(installer.shutil, "which", lambda n: None)
+
+    installer.install(True, mode="all")  # клиентов нет → сразу промпт
+    out = capsys.readouterr().out
+    assert "Не нашёл ни одного известного клиента" in out and "llms-install.md" in out
+    assert (tmp_path / "pm" / "agent-prompt.txt").read_text().startswith("Подключи к себе")
+
+    installer.install(True, mode="prompt")
+    assert "Вставьте этот промпт" in capsys.readouterr().out

@@ -14,7 +14,20 @@ powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ato
 curl -LsSf https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/main/install.sh | sh
 ```
 
-Скрипт ставит [uv](https://docs.astral.sh/uv/) (если его нет), сам коннектор и подключает его ко всем найденным клиентам. Python и git заранее ставить не нужно.
+Скрипт ставит [uv](https://docs.astral.sh/uv/) (если его нет) и сам коннектор, а потом спрашивает, куда его подключить. Python и git заранее ставить не нужно.
+
+```text
+Куда подключить MIREA Connect?
+
+  1) Claude Desktop
+  2) Codex
+  3) Hermes Agent
+  4) Другой агент или харнесс — показать промпт, он подключит коннектор сам
+
+Номера через пробел (Enter — все найденные):
+```
+
+Последний пункт — для любого агента, которого нет в списке. Установщик покажет готовый промпт с точной командой запуска для вашего компьютера, сохранит его в `~/.config/pymirea/agent-prompt.txt` и скопирует в буфер обмена. Вставьте промпт агенту, и он подключит коннектор сам. Без вопросов: `mirea-connect install --all`.
 
 | Клиент | Как подключается |
 |---|---|
@@ -25,7 +38,7 @@ curl -LsSf https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/mai
 | Hermes Agent | `~/.hermes/config.yaml` → `mcp_servers`, потом `/reload-mcp` |
 | OpenClaw | `openclaw mcp set` |
 
-**Другой агент или харнесс?** Вставьте ему промпт, и он поставит и подключит коннектор сам:
+**Агент ещё ничего не ставил?** Можно поручить ему всё целиком, включая установку:
 
 ```text
 Установи и подключи к себе MCP-сервер MIREA Connect по инструкции:
@@ -33,7 +46,7 @@ https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/main/llms-inst
 Перед изменением файлов спрашивай меня. Пароль и код МИРЭА у меня в чате не спрашивай.
 ```
 
-Если коннектор уже установлен, `mirea-connect prompt` выдаст такой же промпт с точной командой запуска для вашего компьютера, а `mirea-connect prompt --json` — только параметры сервера.
+`mirea-connect prompt` снова покажет промпт из установщика, `mirea-connect prompt --json` — только параметры сервера.
 
 Перед правкой файлов делается копия `*.bak`. После установки перезапустите открытые клиенты. Если клиент поставили позже, выполните `mirea-connect install` ещё раз: повторный запуск ничего не дублирует.
 
