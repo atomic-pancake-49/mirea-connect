@@ -123,9 +123,17 @@ def register_tools(mcp: Any, source: Source) -> Callable:
         return await S.timetable(kind, query, days, date_from)
 
     @tool()
-    async def free_rooms(rooms: list[str], start_time: str, end_time: str, date: str | None = None) -> dict:
-        """Свободны ли аудитории в интервал времени (по публичному расписанию).
-        rooms — до 20 названий («А-101», «ИВЦ-124»); start_time/end_time — HH:MM; date — YYYY-MM-DD, по умолчанию сегодня."""
-        return await S.free_rooms(rooms, date, start_time, end_time)
+    async def free_rooms(
+        start_time: str,
+        end_time: str,
+        date: str | None = None,
+        campus: str | None = None,
+        rooms: list[str] | None = None,
+    ) -> dict:
+        """Свободные аудитории в интервал времени (по расписанию МИРЭА).
+        start_time/end_time — HH:MM; date — YYYY-MM-DD, по умолчанию сегодня; campus — корпус («В-78», «С-20», «МП-1»).
+        Без rooms вернёт список свободных аудиторий (с фильтром по корпусу); с rooms («А-9», «А-9 (В-78)») —
+        для каждой, свободна ли она."""
+        return await S.free_rooms(rooms, date, start_time, end_time, campus)
 
     return tool

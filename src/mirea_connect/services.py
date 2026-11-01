@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -207,12 +208,22 @@ async def timetable(kind: str, query: str, days: int | None, date_from: str | No
     }
 
 
-async def free_rooms(rooms: list[str], date: str | None, start_time: str, end_time: str) -> dict:
-    """Какие из перечисленных аудиторий свободны в заданный интервал."""
-    if not rooms:
-        raise ServiceError("Передайте список аудиторий, например [\"А-101\", \"А-102\"].")
-    if len(rooms) > 20:
-        raise ServiceError("Не больше 20 аудиторий за раз.")
+def _split_room(value: str) -> tuple[str, str | None]:
+    """«А-9 (В-78)» → («А-9», «В-78»)."""
+    m = re.match(r"^\s*(.+?)\s*\(([^()]+)\)\s*$", value or "")
+    return (m.group(1), m.group(2).strip()) if m else ((value or "").strip(), None)
+
+
+def _norm(value: str | None) -> str:
+    return (value or "").casefold().replace(" ", "").replace("ё", "е")
+
+
+async def free_rooms(
+    rooms: list[str] | None, date: str | None, start_time: str, end_time: str, campus: str | None = None
+) -> dict:
+    """Свободные аудитории в интервал: проверить конкретные или перечислить все (с фильтром по корпусу)."""
+    if rooms and len(rooms) > 50:
+        raise ServiceError("Не больше 50 аудиторий за раз.")
     day = _start_of(date)
     try:
         sh, sm = (int(x) for x in start_time.split(":"))
@@ -223,25 +234,28 @@ async def free_rooms(rooms: list[str], date: str | None, start_time: str, end_ti
     t1 = day.replace(hour=eh, minute=em)
     if t1 <= t0:
         raise ServiceError("end_time должно быть позже start_time")
-    out = []
-    for room in rooms:
-        try:
-            sched = await fetch_entity("classroom", room)
-        except ServiceError as e:
-            out.append({"room": room, "free": None, "error": str(e)})
-            continue
-        busy = [
-            ev
-            for ev in sched.events
-            if _aware(ev.start) < t1 and (_aware(ev.end) if ev.end else _aware(ev.start) + timedelta(minutes=90)) > t0
-        ]
-        out.append(
-            {
-                "room": sched.entity_name or room,
-                "free": not busy,
-                "busy_with": [
-                    {"start": _aware(e.start).isoformat(timespec="minutes"), "summary": e.summary} for e in busy
-                ],
-            }
-        )
-    return {"date": day.date().isoformat(), "from": start_time, "to": end_time, "rooms": out}
+
+    sched = MireaSchedule()
+    try:
+        free = await sched.get_free_rooms(t0, t1)
+    finally:
+        await sched.close()
+    if free is None:
+        raise ServiceError("Сервис свободных аудиторий недоступен, попробуйте позже.")
+
+    head = {"date": day.date().isoformat(), "from": start_time, "to": end_time}
+    if rooms:
+        index = {(_norm(f["room"]), _norm(f.get("campus"))) for f in free}
+        names = {_norm(f["room"]) for f in free}
+        out = []
+        for raw in rooms:
+            room, room_campus = _split_room(raw)
+            room_campus = room_campus or campus
+            ok = (_norm(room), _norm(room_campus)) in index if room_campus else _norm(room) in names
+            out.append({"room": raw, "free": ok})
+        return {**head, "rooms": out}
+
+    if campus:
+        free = [f for f in free if _norm(f.get("campus")) == _norm(campus)]
+    total = len(free)
+    return {**head, "campus": campus, "total_free": total, "free_rooms": free[:300], "truncated": total > 300}

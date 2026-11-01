@@ -70,7 +70,7 @@ uv tool upgrade mirea-connect   # обновить
 |---|:---:|---|
 | `timetable` | — | Расписание группы, преподавателя или аудитории на N дней |
 | `search_timetable` | — | Поиск группы, преподавателя или аудитории |
-| `free_rooms` | — | Свободны ли аудитории в заданный интервал |
+| `free_rooms` | — | Свободные аудитории в интервал: список по корпусу или проверка конкретных |
 | `my_schedule` | ✓ | Своё расписание из Пульса |
 | `my_grades` | ✓ | Баллы БРС по всем предметам |
 | `my_attendance` | ✓ | Посещаемость по дисциплине |
@@ -172,7 +172,7 @@ ruff check .
 
 - **[atomic-pancake-49/pymirea](https://github.com/atomic-pancake-49/pymirea)**, форк [daftrent/pymirea](https://github.com/daftrent/pymirea) (MIT). Вся работа с МИРЭА: вход через SSO с 2FA, клиенты Пульса, БРС, СКУД, расписание, шифрование сессий.
 - **[PowerTronin/mirea-mcp](https://github.com/PowerTronin/mirea-mcp)** (GPL-3.0). Оттуда взяты принципы: пароль не идёт через чат, инструменты только читают. Код не копировался. Это MCP для СДО (online-edu.mirea.ru) с курсами и дедлайнами, и он хорошо дополняет этот коннектор.
-- **[mirea.ninja](https://mirea.ninja)** ([0niel/university-app](https://github.com/0niel/university-app)). Их API `app-api.mirea.ninja` — источник публичного расписания.
+- **[mirea.ninja](https://mirea.ninja)** ([0niel/university-app](https://github.com/0niel/university-app)) — публичное расписание и свободные аудитории через их Supabase (`supabase.mirea.ninja`, публичные RPC с publishable-ключом). Запасной источник — официальный iCal `schedule-of.mirea.ru`. Старый `app-api.mirea.ninja` не используется.
 
 Проект неофициальный и с РТУ МИРЭА не связан. Пульс — закрытый API, поэтому после изменений на стороне университета что-то может сломаться.
 

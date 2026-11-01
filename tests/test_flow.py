@@ -14,7 +14,7 @@ import pytest
 import respx
 from pymirea import _settings
 from pymirea.auth import AuthChallenge, AuthResult, MireaAuth
-from pymirea.schedule import SCHEDULE_API_BASE
+from pymirea.schedule import SCHEDULE_SUPABASE_URL
 from starlette.testclient import TestClient
 
 from mirea_connect.config import Settings
@@ -124,17 +124,23 @@ class Mcp:
         return bool(res.get("isError")), "".join(c.get("text", "") for c in res["content"])
 
 
+RPC = f"{SCHEDULE_SUPABASE_URL}/rest/v1/rpc"
+
+
 def _mock_schedule():
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups").mock(
-        return_value=httpx.Response(200, json={"results": [{"name": "ЭФБО-01-24", "id": 5012}]})
+    respx.post(f"{RPC}/search_schedule_targets").mock(
+        return_value=httpx.Response(200, json=[{"external_id": "5012", "target_title": "ЭФБО-01-24", "full_title": "ЭФБО-01-24"}])
     )
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/group/5012").mock(
+    respx.post(f"{RPC}/get_schedule_for_entity").mock(
         return_value=httpx.Response(
             200,
-            json={"data": [{"subject": "Физика", "lesson_type": "lecture", "dates": ["2030-01-10"],
-                            "lesson_bells": {"start_time": "09:00", "end_time": "10:30"},
-                            "classrooms": [{"name": "А-9"}], "groups": ["ЭФБО-01-24"]}]},
+            json=[{"type": "__lesson_schedule__", "subject": "Физика", "lesson_type": "lecture", "dates": ["10-01-2030"],
+                   "lesson_bells": {"start_time": "09:00", "end_time": "10:30"},
+                   "classrooms": [{"name": "А-9"}], "groups": ["ЭФБО-01-24"]}],
         )
+    )
+    respx.post(f"{RPC}/get_free_rooms_window").mock(
+        return_value=httpx.Response(200, json=[{"room": "А-9", "campus": "В-78"}, {"room": "10", "campus": "ФФ"}])
     )
 
 
@@ -159,6 +165,11 @@ def test_guest_flow_public_tools_only(client):
     m = Mcp(client, tok["access_token"])
     err, text = m.call("timetable", {"kind": "group", "query": "ЭФБО-01-24", "days": 1, "date_from": "2030-01-10"})
     assert not err and "Физика (lecture)" in text
+    err, text = m.call("free_rooms", {"start_time": "10:40", "end_time": "12:10", "date": "2030-01-10", "campus": "В-78"})
+    assert not err and '"total_free": 1' in text
+    err, text = m.call("free_rooms", {"start_time": "10:40", "end_time": "12:10", "rooms": ["А-9 (В-78)", "А-10"]})
+    data = json.loads(text)
+    assert [r["free"] for r in data["rooms"]] == [True, False]
     err, text = m.call("my_grades", {})
     assert err and "без входа" in text
     err, text = m.call("whoami", {})

@@ -205,7 +205,7 @@ def edit_hermes_yaml(text: str, add: bool) -> tuple[str, bool]:
 
 def _hermes(add: bool) -> bool:
     path = hermes_config()
-    if not path.parent.exists():
+    if not path.parent.exists() and not (add and shutil.which("hermes")):
         return False
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     try:
@@ -292,7 +292,7 @@ def _clients() -> list[tuple[str, Callable[[], bool], Callable[[bool], bool]]]:
         ("Claude Code", lambda: bool(shutil.which("claude")), _claude_code),
         ("Cursor", lambda: cursor.parent.exists(), lambda add: _merge_json(cursor, add)),
         ("Codex", lambda: bool(shutil.which("codex")) or codex_config().parent.exists(), _codex),
-        ("Hermes Agent", lambda: hermes_config().parent.exists(), _hermes),
+        ("Hermes Agent", lambda: bool(shutil.which("hermes")) or hermes_config().parent.exists(), _hermes),
         ("OpenClaw", lambda: bool(shutil.which("openclaw")) or openclaw_config().exists(), _openclaw),
     ]
 
