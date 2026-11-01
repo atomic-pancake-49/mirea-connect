@@ -259,3 +259,18 @@ def test_cli_data_commands(monkeypatch, capsys, tmp_path):
     # личная команда без входа → понятная ошибка, не трейс
     assert main(["grades"]) == 1
     assert "login" in capsys.readouterr().err
+
+
+def test_cli_cyrillic_output_survives_ascii_stdout(monkeypatch, tmp_path):
+    """status не падает и выводит кириллицу даже при stdout с ascii-кодировкой (старая консоль)."""
+    import io
+
+    from mirea_connect.cli import main
+
+    monkeypatch.setenv("PYMIREA_HOME", str(tmp_path / "home"))
+    buf = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict", newline="")
+    monkeypatch.setattr("sys.stdout", buf)
+    rc = main(["status"])  # _force_utf8 должен перевести stdout в utf-8 → без UnicodeEncodeError
+    buf.flush()
+    out = buf.buffer.getvalue().decode("utf-8")
+    assert rc == 1 and "Вход не выполнен" in out

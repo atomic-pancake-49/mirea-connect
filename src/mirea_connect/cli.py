@@ -12,6 +12,18 @@ from . import __version__
 from . import services as S
 
 
+def _force_utf8() -> None:
+    """Кириллица в консоли: без этого старая консоль Windows (cp866/cp1251) выдаёт
+    кракозябры, а при stdout=ascii `print` вообще падает. На 3.7+ переводим потоки в UTF-8."""
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 def _store():
     from pymirea.store import SessionStore
 
@@ -73,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     add_subparsers(sub, common)
 
     args = p.parse_args(argv)
+    if args.cmd != "local":  # у local stdout — канал MCP-протокола, перекодировать нельзя
+        _force_utf8()
     if args.cmd in DATA_COMMANDS:
         from .commands import run as run_data
 
