@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pymirea.acs import MireaACS
 from pymirea.grades import MireaGrades
 from pymirea.schedule import MireaSchedule, Schedule
+from pymirea.sdo import MireaSDO
 
 MSK = timezone(timedelta(hours=3))
 ENTITY_KINDS = ("group", "teacher", "classroom")
@@ -126,6 +127,33 @@ async def acs_today(cookies: dict) -> dict:
     if not res.success:
         raise _fail(res.message)
     return {"date": res.date, "events": [asdict(e) for e in res.events]}
+
+
+async def sdo_overview(cookies: dict, *, deadline_limit: int = 50) -> dict:
+    """СДО (Moodle): курсы, ближайшие дедлайны, оценки — одним вызовом."""
+    api = MireaSDO(session_cookies=cookies)
+    try:
+        courses = await api.get_courses()
+        deadlines = await api.get_deadlines(limit=deadline_limit)
+        grades = await api.get_grades()
+    finally:
+        await api.close()
+    if not courses.success and not deadlines.success and not grades.success:
+        raise _fail(courses.message or deadlines.message or grades.message)
+    return {
+        "courses": [asdict(c) for c in (courses.courses or [])],
+        "deadlines": [
+            {
+                "name": d.name,
+                "course": d.course,
+                "when": _iso(d.timestamp),
+                "activity": d.activity or None,
+                "url": d.url or None,
+            }
+            for d in (deadlines.deadlines or [])
+        ],
+        "grades": [asdict(g) for g in (grades.grades or []) if g.grade],
+    }
 
 
 # --- публичное ---

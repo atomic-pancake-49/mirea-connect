@@ -206,7 +206,11 @@ def test_login_with_otp_and_personal_tool(client, monkeypatch):
         cookies["__brs_visiting_log_id"] = "log1"  # мутация должна сохраниться
         return {"subjects": [{"name": "Физика", "total": 77}]}
 
+    async def fake_sdo(cookies, deadline_limit=50):
+        return {"courses": [{"id": 1, "name": "Физика"}], "deadlines": [], "grades": []}
+
     monkeypatch.setattr(services, "grades", fake_grades)
+    monkeypatch.setattr(services, "sdo_overview", fake_sdo)
 
     cid = _register(client)
     verifier, pk = _pkce()
@@ -223,6 +227,8 @@ def test_login_with_otp_and_personal_tool(client, monkeypatch):
     err, text = m.call("my_grades", {})
     assert not err and "Физика" in text
     assert seen["cookies"][".AspNetCore.Cookies"] == "x"
+    err, text = m.call("my_sdo", {})
+    assert not err and "Физика" in text
     err, text = m.call("whoami", {})
     assert "me@edu.mirea.ru" in text.lower() and '"personal_tools": true' in text
     m.call("my_grades", {})

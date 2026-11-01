@@ -111,6 +111,12 @@ def register_tools(mcp: Any, source: Source) -> Callable:
         return await personal(S.acs_today)
 
     @tool()
+    async def my_sdo(deadline_limit: int = 50) -> dict:
+        """СДО МИРЭА (online-edu.mirea.ru, Moodle): список курсов, ближайшие дедлайны заданий и тестов,
+        итоговые оценки по курсам. Это отдельная от Пульса система (курсы, лекции, сдачи), но вход общий."""
+        return await personal(lambda c: S.sdo_overview(c, deadline_limit=deadline_limit))
+
+    @tool()
     async def search_timetable(kind: str, query: str) -> list[dict]:
         """Поиск в публичном расписании. kind: group | teacher | classroom. Возвращает совпадения с uid."""
         return await S.search(kind, query)
