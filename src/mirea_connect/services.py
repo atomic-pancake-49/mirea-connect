@@ -135,7 +135,8 @@ async def sdo_overview(cookies: dict, *, deadline_limit: int = 50) -> dict:
     try:
         courses = await api.get_courses()
         deadlines = await api.get_deadlines(limit=deadline_limit)
-        grades = await api.get_grades()
+        names = {c.id: c.name for c in (courses.courses or [])}
+        grades = await api.get_grades(course_names=names)
     finally:
         await api.close()
     if not courses.success and not deadlines.success and not grades.success:
