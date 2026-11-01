@@ -20,6 +20,35 @@ def server_command() -> list[str]:
     return [sys.executable, "-m", "mirea_connect", "local"]
 
 
+INSTALL_DOC = "https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/main/llms-install.md"
+
+
+def server_spec() -> dict:
+    cmd = server_command()
+    return {"name": NAME, "command": cmd[0], "args": cmd[1:], "transport": "stdio"}
+
+
+def agent_prompt() -> str:
+    """Промпт для любого агента/харнесса, который не поддержан установщиком напрямую."""
+    spec = server_spec()
+    args = json.dumps(spec["args"], ensure_ascii=False)
+    return f"""Подключи к себе MCP-сервер MIREA Connect (РТУ МИРЭА: расписание, БРС, посещаемость, турникеты).
+
+Он уже установлен на этом компьютере. Параметры:
+- имя: {spec["name"]}
+- транспорт: stdio
+- command: {spec["command"]}
+- args: {args}
+- переменные окружения и рабочий каталог не нужны
+
+Сделай так:
+1. Добавь этот сервер в свою конфигурацию MCP — через свою команду добавления MCP-сервера, если она есть, иначе правкой своего конфига (сначала сохрани копию файла). Используй именно абсолютный путь из command.
+2. Перезагрузи MCP-серверы и проверь, что появились инструменты timetable, my_grades, login; вызови whoami.
+3. Для входа в МИРЭА вызови инструмент login и дай мне ссылку на страницу 127.0.0.1. Никогда не спрашивай мой пароль или код МИРЭА в чате.
+
+Полная инструкция: {INSTALL_DOC}"""
+
+
 def claude_desktop_config() -> Path:
     system = platform.system()
     if system == "Darwin":
@@ -281,9 +310,8 @@ def install(add: bool = True) -> int:
     else:
         print("Не нашёл ни одного поддерживаемого клиента (Claude Desktop, Claude Code, Cursor, Codex, Hermes, OpenClaw).")
         if add:
-            cmd = server_command()
-            print("Добавьте MCP-сервер вручную в свой клиент:")
-            print(json.dumps({"mcpServers": {NAME: {"command": cmd[0], "args": cmd[1:]}}}, ensure_ascii=False, indent=2))
+            print("\nЕсли у вас другой агент — вставьте ему этот промпт, он подключит коннектор сам:\n")
+            print(agent_prompt())
     if add:
         print("\nПерезапустите открытые клиенты (Claude Desktop, Cursor, Codex и т.д.), чтобы они подхватили коннектор.")
         print("Войти в МИРЭА: попросите ассистента «войди в МИРЭА» или выполните `mirea-connect login`.")

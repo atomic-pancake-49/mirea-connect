@@ -48,8 +48,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", action="version", version=f"mirea-connect {__version__}")
     sub = p.add_subparsers(dest="cmd", metavar="КОМАНДА")
 
-    sub.add_parser("install", help="подключить коннектор к Claude Desktop, Claude Code и Cursor")
+    sub.add_parser("install", help="подключить коннектор ко всем найденным клиентам")
     sub.add_parser("uninstall", help="отключить коннектор от клиентов")
+    s = sub.add_parser("prompt", help="промпт для любого другого агента, чтобы он подключил коннектор сам")
+    s.add_argument("--json", action="store_true", help="только параметры сервера в JSON")
     s = sub.add_parser("login", help="войти в МИРЭА в терминале")
     s.add_argument("login", nargs="?")
     sub.add_parser("logout", help="удалить сессию с этого компьютера")
@@ -66,6 +68,13 @@ def main(argv: list[str] | None = None) -> int:
             from .installer import install
 
             return install(True)
+        if args.cmd == "prompt":
+            import json
+
+            from .installer import agent_prompt, server_spec
+
+            print(json.dumps(server_spec(), ensure_ascii=False) if args.json else agent_prompt())
+            return 0
         if args.cmd == "uninstall":
             from .installer import install
 

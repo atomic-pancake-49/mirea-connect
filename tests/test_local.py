@@ -181,3 +181,14 @@ def test_installer_codex_hermes_openclaw(tmp_path, monkeypatch):
     oc = [c for c in calls if c[0] == "/bin/openclaw"]
     assert oc and oc[0][1:4] == ["mcp", "set", "mirea"]
     assert json.loads(oc[0][4])["args"][-1] == "local"
+
+
+def test_prompt_command(capsys):
+    from mirea_connect.cli import main
+
+    assert main(["prompt", "--json"]) == 0
+    spec = json.loads(capsys.readouterr().out)
+    assert spec["transport"] == "stdio" and spec["args"][-1] == "local"
+    assert main(["prompt"]) == 0
+    text = capsys.readouterr().out
+    assert spec["command"] in text and "llms-install.md" in text and "пароль" in text

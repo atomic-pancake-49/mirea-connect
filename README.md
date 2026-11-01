@@ -25,6 +25,16 @@ curl -LsSf https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/mai
 | Hermes Agent | `~/.hermes/config.yaml` → `mcp_servers`, потом `/reload-mcp` |
 | OpenClaw | `openclaw mcp set` |
 
+**Другой агент или харнесс?** Вставьте ему промпт, и он поставит и подключит коннектор сам:
+
+```text
+Установи и подключи к себе MCP-сервер MIREA Connect по инструкции:
+https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/main/llms-install.md
+Перед изменением файлов спрашивай меня. Пароль и код МИРЭА у меня в чате не спрашивай.
+```
+
+Если коннектор уже установлен, `mirea-connect prompt` выдаст такой же промпт с точной командой запуска для вашего компьютера, а `mirea-connect prompt --json` — только параметры сервера.
+
 Перед правкой файлов делается копия `*.bak`. После установки перезапустите открытые клиенты. Если клиент поставили позже, выполните `mirea-connect install` ещё раз: повторный запуск ничего не дублирует.
 
 **Вход в МИРЭА.** Напишите ассистенту «войди в МИРЭА». На этом компьютере откроется страница входа (`127.0.0.1`), где вводятся логин, пароль и код из почты. Есть и вариант из терминала: `mirea-connect login`.
@@ -35,6 +45,7 @@ curl -LsSf https://raw.githubusercontent.com/atomic-pancake-49/mirea-connect/mai
 mirea-connect status      # есть ли вход
 mirea-connect logout      # удалить сессию с компьютера
 mirea-connect uninstall   # отключить от клиентов
+mirea-connect prompt      # промпт для любого другого агента
 uv tool upgrade mirea-connect   # обновить
 ```
 
