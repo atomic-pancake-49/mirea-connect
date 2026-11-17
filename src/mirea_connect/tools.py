@@ -54,7 +54,9 @@ def _guard(source: Source, fn: Callable[..., Awaitable[Any]]) -> Callable[..., A
         except S.SessionExpired as e:
             raise ToolError(f"МИРЭА отклонила сессию ({e}). {source.relogin_hint}") from e
         except S.ServiceError as e:
-            raise ToolError(str(e)) from e
+            raise ToolError(str(e)) from None
+        except Exception:
+            raise ToolError("Не удалось получить данные МИРЭА. Попробуйте позже.") from None
 
     return wrapper
 
@@ -95,8 +97,9 @@ def register_tools(mcp: Any, source: Source) -> Callable:
 
     @tool()
     async def my_grades() -> dict:
-        """Баллы БРС за текущий семестр: текущий контроль (из 40), семестровый (из 30), посещения (из 30),
-        достижения, дополнительные, итог (из 120). attendance_max_possible — достижимый максимум за посещения."""
+        """Баллы БРС за текущий семестр: текущий и семестровый контроль, посещения, достижения, дополнительные, итог.
+        Максимумы берутся из полей *_max ответа Pulse, а не из фиксированной шкалы.
+        attendance_max_possible — достижимый максимум за посещения."""
         return await personal(S.grades)
 
     @tool()

@@ -7,9 +7,10 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 from pymirea.acs import MireaACS
-from pymirea.grades import MireaGrades
 from pymirea.schedule import MireaSchedule, Schedule
-from pymirea.sdo import MireaSDO
+
+from .portal_clients import MireaGrades, MireaSDO
+from .session_state import approve_session_updates
 
 MSK = timezone(timedelta(hours=3))
 ENTITY_KINDS = ("group", "teacher", "classroom")
@@ -29,8 +30,10 @@ class SessionExpired(ServiceError):
 def _fail(message: str) -> ServiceError:
     low = (message or "").lower()
     if any(h in low for h in _SESSION_EXPIRED_HINTS):
-        return SessionExpired(message)
-    return ServiceError(message or "МИРЭА вернула ошибку")
+        return SessionExpired("Сессия МИРЭА истекла.")
+    # Upstream messages may contain request URLs, cookies or protocol payloads.
+    # Classification is internal; user-facing text is always connector-owned.
+    return ServiceError("Не удалось получить данные МИРЭА. Проверьте соединение и попробуйте позже.")
 
 
 def _iso(epoch: float | None) -> str | None:
@@ -53,6 +56,8 @@ async def my_schedule(cookies: dict, days: int) -> dict:
         await api.close()
     if not res.success and res.message != "Нет пар в ближайшие дни":
         raise _fail(res.message)
+    if res.success:
+        approve_session_updates(cookies)
     return {
         "days": days,
         "lessons": [
@@ -78,6 +83,7 @@ async def grades(cookies: dict) -> dict:
         await api.close()
     if not res.success:
         raise _fail(res.message)
+    approve_session_updates(cookies)
     return {"subjects": [asdict(s) for s in (res.subjects or [])]}
 
 
@@ -107,6 +113,7 @@ async def attendance(cookies: dict, discipline: str) -> dict:
         await api.close()
     if not res.success:
         raise _fail(res.message)
+    approve_session_updates(cookies)
     return {
         "discipline": subj.name,
         "discipline_id": subj.discipline_id,
@@ -126,6 +133,7 @@ async def acs_today(cookies: dict) -> dict:
         await api.close()
     if not res.success:
         raise _fail(res.message)
+    approve_session_updates(cookies)
     return {"date": res.date, "events": [asdict(e) for e in res.events]}
 
 
@@ -141,6 +149,8 @@ async def sdo_overview(cookies: dict, *, deadline_limit: int = 50) -> dict:
         await api.close()
     if not courses.success and not deadlines.success and not grades.success:
         raise _fail(courses.message or deadlines.message or grades.message)
+    if courses.success and deadlines.success and grades.success:
+        approve_session_updates(cookies)
     return {
         "courses": [asdict(c) for c in (courses.courses or [])],
         "deadlines": [

@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-*/
 *.egg-info/
 dist/
 build/
@@ -8,3 +9,4 @@ build/
 .ruff_cache/
 data/
 .env
+tests/artifacts/

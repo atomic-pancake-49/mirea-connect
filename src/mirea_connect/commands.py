@@ -180,18 +180,18 @@ async def _session(store) -> AsyncIterator[dict]:
         stored = store.load()
     except NotLoggedIn as e:
         raise S.ServiceError(f"{e} Выполните `mirea-connect login`.") from e
-    cookies = stored.cookies
+    from .session_state import OperationCookies
+
+    cookies = OperationCookies(stored.cookies)
     before = _j.dumps(cookies, sort_keys=True, default=str)
     try:
         await ensure_fresh_token(cookies, buffer_s=60)
     except MireaSessionExpired as e:
-        store.clear()
         raise S.SessionExpired("Сессия МИРЭА истекла. Выполните `mirea-connect login`.") from e
-    try:
-        yield cookies
-    finally:
-        if _j.dumps(cookies, sort_keys=True, default=str) != before:
-            store.save(cookies)
+    yield cookies
+    # Do not promote state from a rejected/cancelled operation to verified.
+    if cookies.persist_allowed and _j.dumps(cookies, sort_keys=True, default=str) != before:
+        store.save(cookies)
 
 
 # --- запуск одной команды ---

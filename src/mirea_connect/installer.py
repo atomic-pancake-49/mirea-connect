@@ -216,7 +216,7 @@ def _hermes(add: bool) -> bool:
     if changed:
         _atomic_write(path, new)
         if add:
-            print("  i Hermes: выполните /reload-mcp в открытой сессии")
+            print("  i Hermes CLI: /reload-mcp; Desktop: обновите MCP-подключение в настройках или перезапустите клиент")
     return changed
 
 

@@ -21,7 +21,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from mcp.server.mcpserver import MCPServer
-from pymirea.auth import AuthChallenge, MireaAuth
+from mcp.types import ToolAnnotations
+from pymirea.auth import AuthChallenge
 from pymirea.exceptions import MireaSessionExpired
 from pymirea.store import NotLoggedIn, SessionStore
 from pymirea.tokens import ensure_fresh_token
@@ -30,6 +31,10 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 from starlette.routing import Route
 
+from . import services as S
+from .auth import MireaAuth
+from .login_session import verify_candidate, write_diagnostic
+from .session_state import LocalSessionStore, OperationCookies
 from .sessions import NoSession
 from .tools import BASE_INSTRUCTIONS, LOCAL_ACTION, register_tools
 from .web import _err, _page
@@ -40,21 +45,22 @@ LOGIN_PAGE_TTL_S = 15 * 60
 
 INSTRUCTIONS = BASE_INSTRUCTIONS + (
     " Коннектор работает локально на устройстве пользователя. Если личные инструменты (my_*) сообщают, "
-    "что входа нет или сессия истекла, вызови инструмент login: он откроет страницу входа МИРЭА "
-    "в браузере на этом компьютере. Дай пользователю ссылку из ответа и подожди, пока он скажет, что вошёл."
+    "что входа нет или сессия истекла, сначала вызови verify_login: он проверяет сохранённого кандидата "
+    "без пароля и нового кода. Только если кандидата нет, предложи login или mirea-connect login."
 )
 
 RELOGIN_HINT = (
-    "Вызови инструмент login — откроется страница входа МИРЭА на этом компьютере "
-    "(или выполни в терминале `mirea-connect login`)."
+    "Сначала verify_login (или `mirea-connect verify-login`) для сохранённого кандидата без нового кода. "
+    "Только если кандидата нет, используйте login или `mirea-connect login`."
 )
 
 
 class LocalSource:
     relogin_hint = RELOGIN_HINT
 
-    def __init__(self, store: SessionStore) -> None:
+    def __init__(self, store: SessionStore, *, clear_on_expiry: bool = False) -> None:
         self.store = store
+        self.clear_on_expiry = clear_on_expiry  # False: истёкшая сессия остаётся на диске, просто нужен вход
         self._lock = asyncio.Lock()
 
     @asynccontextmanager
@@ -64,31 +70,30 @@ class LocalSource:
                 stored = self.store.load()
             except NotLoggedIn as e:
                 raise NoSession("Вход в МИРЭА не выполнен.") from e
-            cookies = stored.cookies
+            cookies = OperationCookies(stored.cookies)
             before = json.dumps(cookies, sort_keys=True, default=str)
             try:
                 await ensure_fresh_token(cookies, buffer_s=60)
             except MireaSessionExpired as e:
-                self.store.clear()
                 raise NoSession("Сессия МИРЭА истекла.") from e
-            try:
-                yield cookies
-            finally:
-                if json.dumps(cookies, sort_keys=True, default=str) != before:
-                    self.store.save(cookies)
+            yield cookies
+            # Only a successful operation can persist refreshed state. Exceptions
+            # (including cancellation) must preserve the previous verified record.
+            if cookies.persist_allowed and json.dumps(cookies, sort_keys=True, default=str) != before:
+                self.store.save(cookies)
 
     def whoami(self) -> dict:
         try:
             stored = self.store.load()
         except NotLoggedIn:
             return {"mode": "local", "logged_in": False, "personal_tools": False}
-        return {"mode": "local", "logged_in": True, "login": stored.login, "personal_tools": True}
+        return {"mode": "local", "logged_in": True, "login": stored.login, "personal_tools": True, "server_checked": False}
 
     def forget(self) -> None:
-        self.store.clear()
+        raise S.ServiceError("Удаление локальной сессии отключено; все версии сохранены.")
 
     def mark_dead(self) -> None:
-        self.store.clear()
+        pass  # Retain expired records; never erase evidence during a read.
 
 
 # --- локальная страница входа ---
@@ -128,6 +133,7 @@ class LocalLogin:
         self._challenge: AuthChallenge | None = None
         self._login = ""
         self._attempts = 0
+        self._otp_attempts = 0
         self._started = 0.0
 
     @property
@@ -142,6 +148,7 @@ class LocalLogin:
 
         self._secret = secrets.token_urlsafe(18)
         self._attempts = 0
+        self._otp_attempts = 0
         self.done = asyncio.Event()
         base = f"/{self._secret}"
         app = Starlette(
@@ -152,6 +159,7 @@ class LocalLogin:
             ]
         )
         port = _free_port()
+        self._host = f"127.0.0.1:{port}"
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False, lifespan="off")
         self._server = _NoSignalServer(config)
         self._task = asyncio.create_task(self._server.serve())
@@ -166,6 +174,8 @@ class LocalLogin:
 
     async def stop(self) -> None:
         if self._auth:
+            with contextlib.suppress(OSError, ValueError):
+                write_diagnostic(self._auth.diagnostics, self.store)
             with contextlib.suppress(Exception):
                 await self._auth.close()
         self._auth = None
@@ -194,12 +204,15 @@ class LocalLogin:
         return _page("Вход в МИРЭА", body)
 
     def _otp(self, error: str | None = None) -> HTMLResponse:
+        kind = self._challenge.kind if self._challenge else None
+        delivery = {"email_code": "Код из письма на привязанную почту.", "max_otp": "Код из MAX.",
+                    "otp": "Код из приложения-аутентификатора."}.get(kind, "Подтверждение SSO.")
         body = f"""<div class="card">
 <h1>Код подтверждения</h1>
-<p class="muted">МИРЭА отправила код на вашу университетскую почту.</p>
+<p class="muted">{delivery}</p>
 {_err(error)}
 <form method="post" action="/{self._secret}/otp">
-<label for="c">Код</label><input id="c" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+<label for="c">Код</label><input id="c" name="code" type="password" inputmode="numeric" autocomplete="one-time-code" required autofocus>
 <button>Подтвердить</button>
 </form></div>"""
         return _page("Код подтверждения", body)
@@ -209,16 +222,41 @@ class LocalLogin:
 <p>Вы вошли в МИРЭА. Сессия сохранена на этом компьютере. Вкладку можно закрыть и вернуться в чат.</p></div>"""
         return _page("Готово", body)
 
-    def _finish(self, cookies: dict) -> Response:
-        self.store.save(cookies, login=self._login)
-        self.done.set()
-        asyncio.get_running_loop().call_later(2, lambda: asyncio.ensure_future(self.stop()))
-        return self._ok()
+    async def _finish(self, cookies: dict) -> Response:
+        self._challenge = None
+        if self._auth and self._auth.checkpoint_error:
+            return self._form("Не удалось сохранить кандидата; вход не объявлен успешным.")
+        try:
+            ident = self._auth.candidate_id if self._auth else None
+            ident = ident or self.store.save_candidate(cookies, login=self._login)
+            answer = await verify_candidate(self.store, ident)
+        except (OSError, ValueError, NotLoggedIn):
+            return self._form("Не удалось сохранить или проверить кандидата; прежние файлы не изменены.")
+        title = "Готово" if answer["status"] == "verified" else "Кандидат сохранён"
+        if answer["status"] == "verified":
+            self.done.set()
+            asyncio.get_running_loop().call_later(2, lambda: asyncio.ensure_future(self.stop()))
+        pulse = "проверен" if answer["pulse"]["status"] == "verified" else "не подтверждён"
+        sdo = "проверена" if answer["sdo"]["status"] == "verified" else "не подтверждена"
+        command = html.escape("mirea-connect verify-login " + answer["candidate_id"])
+        return _page(title, f'<div class="card"><h1>{title}</h1><p>Pulse: {pulse}. СДО: {sdo}.</p><p>Повторная проверка без пароля и нового кода:</p><code>{command}</code></div>')
+
+    def _foreign(self, request: Request) -> bool:
+        """Чужой Host (DNS rebinding) или POST с чужого сайта. Origin у этих страниц бывает «null»
+        из-за referrer=no-referrer, поэтому принимаем его; путь всё равно знает только владелец ссылки."""
+        if request.headers.get("host") != getattr(self, "_host", None):
+            return True
+        origin = request.headers.get("origin")
+        return request.method == "POST" and origin not in (None, "null", f"http://{self._host}")
 
     async def _get(self, request: Request) -> Response:
+        if self._foreign(request):
+            return Response("Forbidden", status_code=403)
         return self._form()
 
     async def _post_login(self, request: Request) -> Response:
+        if self._foreign(request):
+            return Response("Forbidden", status_code=403)
         form = await request.form()
         login = str(form.get("username", "")).strip()
         password = str(form.get("password", ""))
@@ -228,47 +266,92 @@ class LocalLogin:
         if self._attempts > 8:
             return self._form("Слишком много попыток. Вызовите login заново.", login)
         if self._auth:
+            with contextlib.suppress(OSError, ValueError):
+                write_diagnostic(self._auth.diagnostics, self.store)
             with contextlib.suppress(Exception):
                 await self._auth.close()
         self._auth = MireaAuth()
         self._login = login
+        self._otp_attempts = 0
+        self._auth.checkpoint_handler = lambda cookies: self.store.save_candidate(cookies, login=self._login)
         try:
             result = await self._auth.login(login, password)
         except Exception:
-            logger.exception("login failed")
+            logger.warning("login failed; raw error details suppressed")
             return self._form("МИРЭА не ответила. Попробуйте позже.", login)
         if result.challenge:
             self._challenge = result.challenge
             return self._otp()
-        if not result.success or not result.cookies:
+        if result.cookies:
+            return await self._finish(result.cookies)
+        if not result.success:
             return self._form(result.message or "Не удалось войти.", login)
-        return self._finish(result.cookies)
+        return self._form("SSO не вернула кандидата сессии.", login)
 
     async def _post_otp(self, request: Request) -> Response:
+        if self._foreign(request):
+            return Response("Forbidden", status_code=403)
         if not self._auth or not self._challenge:
             return self._form("Сначала введите логин и пароль.")
         form = await request.form()
         code = str(form.get("code", "")).strip()
+        self._otp_attempts += 1
+        if self._otp_attempts > 3:
+            self._challenge = None
+            return self._form("Лимит подтверждений исчерпан; новые коды не отправлялись.")
         try:
             result = await self._auth.complete_2fa(self._challenge, code)
         except Exception:
-            logger.exception("otp failed")
-            return self._otp("МИРЭА не ответила. Попробуйте ещё раз.")
+            logger.warning("otp flow stopped; raw error details suppressed")
+            self._challenge = None
+            return self._form("Подтверждение остановлено. Сохранённого кандидата можно проверить отдельно.")
         if result.challenge:
             self._challenge = result.challenge
             return self._otp(result.message or "Неверный код.")
-        if not result.success or not result.cookies:
-            return self._otp(result.message or "Неверный код.")
-        return self._finish(result.cookies)
+        self._challenge = None
+        if result.cookies:
+            return await self._finish(result.cookies)
+        return self._form(result.message or "Подтверждение остановлено; нового запроса кода нет.")
 
 
 def build_local(store: SessionStore | None = None) -> tuple[MCPServer, LocalLogin]:
-    store = store or SessionStore()
+    store = store if store is not None else LocalSessionStore()
     store.configure()
     mcp = MCPServer(name="mirea-connect", title="MIREA Connect", instructions=INSTRUCTIONS)
     source = LocalSource(store)
     tool = register_tools(mcp, source)
     page = LocalLogin(store)
+
+    @tool(ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    async def verify_login(candidate_id: str | None = None) -> dict:
+        """Проверить сохранённого кандидата без пароля и нового кода. Без ID — последний кандидат.
+        Только чтение Pulse/СДО и новые зашифрованные версии; ничего не удаляет."""
+        try:
+            answer = await verify_candidate(store, candidate_id)
+            try:
+                write_diagnostic([{"phase": "verify", "checkpoint_saved": True}], store)
+            except (OSError, ValueError):
+                answer["warnings"].append("diagnostic_save_failed")
+            return answer
+        except (NotLoggedIn, ValueError, OSError):
+            raise S.ServiceError("Сохранённый кандидат недоступен; существующие файлы не изменены.") from None
+
+    @tool(LOCAL_ACTION)
+    async def export_materials(course: str | None = None) -> dict:
+        """Экспорт опубликованных материалов СДО в локальный ZIP. Без course — все доступные
+        курсы; course — название курса или его однозначная часть, например «Большие данные».
+        ID знать не нужно. Неоднозначное название вернёт варианты, не выберет курс наугад.
+        Возвращает пути к архиву/манифесту, статус и счётчики.
+        Не запускает тесты и не отправляет работы. Неполный экспорт отмечается явно."""
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        from .material_commands import export_to_disk
+
+        async with source.use() as cookies:
+            try:
+                return await export_to_disk(cookies, course)
+            except OSError as exc:
+                raise ToolError(f"Не удалось сохранить экспорт: {type(exc).__name__}") from None
 
     @tool(LOCAL_ACTION)
     async def login(open_browser: bool = True) -> dict:

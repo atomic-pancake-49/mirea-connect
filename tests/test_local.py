@@ -8,11 +8,12 @@ import re
 import httpx
 import pytest
 from pymirea import _settings
-from pymirea.auth import AuthChallenge, AuthResult, MireaAuth
-from pymirea.store import SessionStore
+from pymirea.auth import AuthChallenge, AuthResult
 
-from mirea_connect import installer, services
+from mirea_connect import installer, login_session, services
+from mirea_connect.auth import MireaAuth
 from mirea_connect.local import build_local
+from mirea_connect.session_state import LocalSessionStore as SessionStore
 
 
 @pytest.fixture
@@ -43,9 +44,15 @@ async def test_local_login_page_and_personal_tool(store, monkeypatch):
         assert cookies["K"] == "v"
         return {"subjects": [{"name": "Физика"}]}
 
+    async def fake_sdo(cookies):
+        assert cookies["K"] == "v"
+        return {"courses_count": 1}
+
     monkeypatch.setattr(MireaAuth, "login", fake_login)
     monkeypatch.setattr(MireaAuth, "complete_2fa", fake_2fa)
     monkeypatch.setattr(services, "grades", fake_grades)
+    monkeypatch.setattr(login_session, "_pulse_read", fake_grades)
+    monkeypatch.setattr(login_session, "_sdo_read", fake_sdo)
 
     mcp, page = build_local(store)
     from mcp.server.mcpserver.exceptions import ToolError
@@ -77,8 +84,9 @@ async def test_local_login_page_and_personal_tool(store, monkeypatch):
     assert "Физика" in _text(res)
     res = await mcp.call_tool("whoami", {})
     assert '"logged_in": true' in _text(res)
-    await mcp.call_tool("delete_my_data", {})
-    assert not store.exists()
+    with pytest.raises(ToolError, match="отключено"):
+        await mcp.call_tool("delete_my_data", {})
+    assert store.exists()
 
 
 def test_installer_writes_configs(tmp_path, monkeypatch):
